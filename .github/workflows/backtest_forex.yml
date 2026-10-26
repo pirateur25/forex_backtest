@@ -1,0 +1,150 @@
+name: Backtest Forex
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Paires séparées par des virgules (EURUSD, GBPUSD, USDCHF, USDJPY, XAUUSD)"
+        default: "EURUSD,USDJPY,XAUUSD"
+      start:
+        description: "Date de début (AAAA-MM-JJ, données depuis 2021-01-03)"
+        default: "2021-01-04"
+      end:
+        description: "Date de fin (vide = fin des données)"
+        default: ""
+      risk_pct:
+        description: "Risque par trade (% du capital)"
+        default: "1"
+      fee_pct:
+        description: "Coût par ordre (%) = spread/commission. 0.005 = environ 1 pip aller-retour sur EURUSD"
+        default: "0.005"
+      slippage_pct:
+        description: "Glissement par ordre (%) — 0 = aucun"
+        default: "0"
+      leverage:
+        description: "Levier maximum"
+        default: "50"
+      side:
+        description: "Sens des trades"
+        type: choice
+        default: "ventes seulement"
+        options: ["ventes seulement", "achats seulement", "achats et ventes"]
+      confirmations:
+        description: "Confirmations utilisées"
+        type: choice
+        default: "mss seulement"
+        options: ["mss seulement", "bulle seulement", "bulle + mss"]
+      conf_tfs:
+        description: "Unités de temps des confirmations (ex: 5m ou 5m,15m,1h)"
+        default: "5m"
+      session:
+        description: "Heures d'entrée autorisées (UTC)"
+        type: choice
+        default: "toute la journée"
+        options: ["toute la journée", "Londres 7h-12h", "New York 12h-17h", "Londres + New York 7h-17h", "Asie 0h-7h", "hors Asie 7h-22h"]
+      mss_swing_bars:
+        description: "MSS : nb de bougies de chaque côté pour valider un plus haut / un creux"
+        default: "2"
+      sl_min_pct:
+        description: "Stop minimum en % du prix (0 = aucun)"
+        default: "0.2657"
+      tp_fib:
+        description: "TP en multiple de la jambe de retracement (1.5 = au-delà du point bas de la jambe)"
+        default: "1.5233"
+      be_rr:
+        description: "Break-even : SL à l'entrée quand le gain atteint X fois le risque. 1000 = désactivé"
+        default: "2"
+      trend_filter:
+        description: "Ne trader que dans le sens de la tendance H4 ? (oui / non)"
+        type: choice
+        default: "non"
+        options: ["oui", "non"]
+      trend_mode:
+        description: "Méthode de tendance : dow, ma ou both"
+        type: choice
+        default: "both"
+        options: ["dow", "ma", "both"]
+      zz_atr_trend:
+        description: "Lenteur de la tendance (ZigZag en ATR)"
+        default: "5.5628"
+      ote_react:
+        description: "Retracement invalide si la zone OTE a déjà réagi ? (oui / non)"
+        type: choice
+        default: "non"
+        options: ["oui", "non"]
+      params:
+        description: "Autres réglages (ex: ote_lo=0.6;ote_hi=0.9;sl_buf_atr=1). Vide = défaut"
+        default: ""
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installation des dépendances
+        run: pip install requests pandas numpy matplotlib numba
+
+      - name: Lancement de la simulation
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          SYMBOLS: ${{ inputs.symbols }}
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          RISK: ${{ inputs.risk_pct }}
+          FEE: ${{ inputs.fee_pct }}
+          SLIPPAGE: ${{ inputs.slippage_pct }}
+          LEVERAGE: ${{ inputs.leverage }}
+          SIDE: ${{ inputs.side }}
+          CONFIRMATIONS: ${{ inputs.confirmations }}
+          CONF_TFS: ${{ inputs.conf_tfs }}
+          SESSION: ${{ inputs.session }}
+          MSS_K: ${{ inputs.mss_swing_bars }}
+          SL_MIN: ${{ inputs.sl_min_pct }}
+          TP_FIB: ${{ inputs.tp_fib }}
+          BE_RR: ${{ inputs.be_rr }}
+          TREND_FILTER: ${{ inputs.trend_filter }}
+          TREND_MODE: ${{ inputs.trend_mode }}
+          ZZ_TREND: ${{ inputs.zz_atr_trend }}
+          OTE_REACT: ${{ inputs.ote_react }}
+          PARAMS: ${{ inputs.params }}
+        run: |
+          if [ "$TREND_FILTER" = "oui" ]; then TF=1; else TF=0; fi
+          if [ "$OTE_REACT" = "oui" ]; then OR=1; else OR=0; fi
+          case "$SIDE" in
+            "achats seulement") SD="long" ;;
+            "achats et ventes") SD="both" ;;
+            *) SD="short" ;;
+          esac
+          case "$CONFIRMATIONS" in
+            "bulle seulement") CF="bubble" ;;
+            "bulle + mss") CF="bubble,mss" ;;
+            *) CF="mss" ;;
+          esac
+          case "$SESSION" in
+            "Londres 7h-12h") S0=7; S1=12 ;;
+            "New York 12h-17h") S0=12; S1=17 ;;
+            "Londres + New York 7h-17h") S0=7; S1=17 ;;
+            "Asie 0h-7h") S0=0; S1=7 ;;
+            "hors Asie 7h-22h") S0=7; S1=22 ;;
+            *) S0=0; S1=24 ;;
+          esac
+          ALL="side=$SD;confirms=$CF;conf_tfs=$CONF_TFS;session_start=$S0;session_end=$S1;mss_fractal=$MSS_K;min_sl_pct=$SL_MIN;tp_fib=$TP_FIB;be_rr=$BE_RR;trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;ote_react=$OR;$PARAMS"
+          python backtest/run_backtest.py \
+            --symbols "$SYMBOLS" --interval 5m --start "$START" --end "$END" \
+            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$ALL"
+
+      - name: Sauvegarde des résultats (trades, courbes)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultats-backtest
+          path: results/
